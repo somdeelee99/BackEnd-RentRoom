@@ -1,13 +1,306 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client"
-  output   = "../generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
+}
+
+// ===============================
+// ENUMS
+// ===============================
+
+enum UserRole {
+  TENANT
+  OWNER
+  ADMIN
+}
+
+enum AccountProvider {
+  GOOGLE
+  FACEBOOK
+  APPLE
+  PHONE
+}
+
+enum PropertyType {
+  ROOM
+  APARTMENT
+  HOUSE
+  BUILDING
+  OFFICE
+  TOWNHOUSE
+  VILLA
+  LAND
+  OTHER
+}
+
+enum ListingStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  RENTED
+  HIDDEN
+}
+
+enum RentalPeriod {
+  DAY
+  WEEK
+  MONTH
+  YEAR
+}
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  REJECTED
+}
+
+enum ReportStatus {
+  PENDING
+  REVIEWING
+  RESOLVED
+  REJECTED
+}
+
+// ===============================
+// USER
+// ===============================
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  fullName     String
+  email        String?  @unique
+  phone        String?  @unique
+  passwordHash String?
+  avatarUrl    String?
+  role         UserRole @default(TENANT)
+  isActive     Boolean  @default(true)
+  isVerified   Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  accounts           AuthAccount[]
+  properties         Property[]    @relation("PropertyOwner")
+  favorites          Favorite[]
+  tenantAppointments Appointment[] @relation("AppointmentTenant")
+  ownerAppointments  Appointment[] @relation("AppointmentOwner")
+
+  tenantConversations Conversation[] @relation("ConversationTenant")
+  ownerConversations  Conversation[] @relation("ConversationOwner")
+  sentMessages        Message[]
+  reports             Report[]       @relation("ReportReporter")
+  receivedReports     Report[]       @relation("ReportTargetUser")
+
+  @@index([role])
+  @@index([createdAt])
+}
+
+// ===============================
+// SOCIAL LOGIN / AUTH PROVIDERS
+// ===============================
+
+model AuthAccount {
+  id                String          @id @default(uuid()) @db.Uuid
+  provider          AccountProvider
+  providerAccountId String
+  userId            String          @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+// ===============================
+// PROPERTY LISTINGS
+// ===============================
+
+model Property {
+  id      String @id @default(uuid()) @db.Uuid
+  ownerId String @db.Uuid
+
+  title       String
+  description String?
+  type        PropertyType
+  status      ListingStatus @default(DRAFT)
+
+  price        Decimal      @db.Decimal(12, 2)
+  currency     String       @default("LAK")
+  rentalPeriod RentalPeriod @default(MONTH)
+
+  province  String
+  district  String?
+  village   String?
+  address   String?
+  latitude  Decimal? @db.Decimal(10, 7)
+  longitude Decimal? @db.Decimal(10, 7)
+
+  bedrooms      Int?
+  bathrooms     Int?
+  areaSqm       Decimal? @db.Decimal(10, 2)
+  floor         Int?
+  maxOccupants  Int?
+  depositAmount Decimal? @db.Decimal(12, 2)
+
+  hasParking      Boolean @default(false)
+  hasWifi         Boolean @default(false)
+  hasAirCondition Boolean @default(false)
+  isFurnished     Boolean @default(false)
+  allowsPets      Boolean @default(false)
+
+  availableFrom   DateTime?
+  rejectionReason String?
+  approvedAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  owner         User            @relation("PropertyOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  images        PropertyImage[]
+  favorites     Favorite[]
+  appointments  Appointment[]
+  conversations Conversation[]
+  reports       Report[]
+
+  @@index([ownerId])
+  @@index([type, status])
+  @@index([province, district])
+  @@index([price])
+  @@index([status, createdAt])
+}
+
+// ===============================
+// PROPERTY IMAGES
+// ===============================
+
+model PropertyImage {
+  id         String  @id @default(uuid()) @db.Uuid
+  propertyId String  @db.Uuid
+  imageUrl   String
+  sortOrder  Int     @default(0)
+  isCover    Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, sortOrder])
+}
+
+// ===============================
+// FAVORITES
+// ===============================
+
+model Favorite {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @db.Uuid
+  propertyId String   @db.Uuid
+  createdAt  DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, propertyId])
+  @@index([userId, createdAt])
+}
+
+// ===============================
+// VIEWING APPOINTMENTS
+// ===============================
+
+model Appointment {
+  id         String @id @default(uuid()) @db.Uuid
+  tenantId   String @db.Uuid
+  ownerId    String @db.Uuid
+  propertyId String @db.Uuid
+
+  scheduledAt DateTime
+  status      AppointmentStatus @default(PENDING)
+  note        String?
+  ownerNote   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant   User     @relation("AppointmentTenant", fields: [tenantId], references: [id], onDelete: Restrict)
+  owner    User     @relation("AppointmentOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, status])
+  @@index([ownerId, scheduledAt])
+  @@index([propertyId, scheduledAt])
+}
+
+// ===============================
+// CONVERSATIONS
+// ===============================
+
+model Conversation {
+  id         String  @id @default(uuid()) @db.Uuid
+  tenantId   String  @db.Uuid
+  ownerId    String  @db.Uuid
+  propertyId String? @db.Uuid
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant   User      @relation("ConversationTenant", fields: [tenantId], references: [id], onDelete: Restrict)
+  owner    User      @relation("ConversationOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  property Property? @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  messages Message[]
+
+  @@index([tenantId, updatedAt])
+  @@index([ownerId, updatedAt])
+  @@index([propertyId])
+}
+
+model Message {
+  id             String @id @default(uuid()) @db.Uuid
+  conversationId String @db.Uuid
+  senderId       String @db.Uuid
+
+  content   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation(fields: [senderId], references: [id], onDelete: Restrict)
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+}
+
+// ===============================
+// REPORTS
+// ===============================
+
+model Report {
+  id           String  @id @default(uuid()) @db.Uuid
+  reporterId   String  @db.Uuid
+  propertyId   String? @db.Uuid
+  targetUserId String? @db.Uuid
+
+  reason      String
+  description String?
+  status      ReportStatus @default(PENDING)
+  adminNote   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  reporter   User      @relation("ReportReporter", fields: [reporterId], references: [id], onDelete: Restrict)
+  property   Property? @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  targetUser User?     @relation("ReportTargetUser", fields: [targetUserId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([propertyId])
+  @@index([targetUserId])
 }
